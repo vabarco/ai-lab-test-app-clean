@@ -42,7 +42,9 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 app = Flask(__name__, static_folder="public", static_url_path="/")
 app.secret_key=os.getenv("SECRET_KEY")
 app.config["SESSION_TYPE"] = "filesystem"
-CORS(app)
+
+# Allow CORS for your deployed frontend
+CORS(app, origins=["https://ai-lab-test-l852otuc8-vabarcos-projects.vercel.app"])
 
 # ✅ Supabase Setup
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -61,9 +63,9 @@ app.register_blueprint(google_bp, url_prefix="/login")
 def serve_index():
     return send_from_directory("public", "index.html")
 
-@app.route("/<path:filename>")
-def serve_static(filename):
-    return send_from_directory("public", filename)
+@app.route('/<path:path>')
+def serve_static(path):
+    return send_from_directory('public', path)
 
 # ✅ Google Login
 @app.route("/google-login")
