@@ -1,60 +1,50 @@
 from dotenv import load_dotenv
 import os
-# ✅ Allow OAuth to work over HTTP (for local development)
-os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-
-from flask import Flask, request, jsonify, session, send_from_directory, redirect, url_for
-from flask_dance.contrib.google import make_google_blueprint, google
-from supabase import create_client, Client
 import openai
 import pytesseract
-from PIL import Image
-import PyPDF2
 import traceback
 import re
-from fpdf import FPDF
-from flask_cors import CORS
 import threading
 import uuid
+import PyPDF2
+from PIL import Image
+from flask import Flask, request, jsonify, session, send_from_directory, redirect, url_for
+from flask_dance.contrib.google import make_google_blueprint, google
+from flask_cors import CORS
+from fpdf import FPDF
+from supabase import create_client, Client
 
-# Load environment variables from .env file
+# ✅ Load environment variables from .env
 load_dotenv()
 
-# Debugging: Check if variables are loaded
-print("SUPABASE_URL:", os.getenv("SUPABASE_URL"))
-print("SUPABASE_KEY:", "Loaded!" if os.getenv("SUPABASE_KEY") else "Missing!")
-
+# ✅ Debugging: Ensure environment variables are loaded
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-
-# Check if variables are loaded
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-# ✅ Create Supabase Client
-from supabase import create_client, Client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
 SECRET_KEY = os.getenv("SECRET_KEY")
 
-# ✅ Flask App Setup
+if not all([SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SECRET_KEY]):
+    raise ValueError("Missing required environment variables. Check .env file.")
+
+# ✅ Initialize Flask App
 app = Flask(__name__, static_folder="public", static_url_path="/")
-app.secret_key=os.getenv("SECRET_KEY")
+app.secret_key = SECRET_KEY
 app.config["SESSION_TYPE"] = "filesystem"
 
-# Allow CORS for your deployed frontend
-CORS(app, origins=["https://ai-lab-test-l852otuc8-vabarcos-projects.vercel.app"])
+# ✅ Allow CORS
+CORS(app, origins=["*"])
 
-# ✅ Supabase Setup
+# ✅ Initialize Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ✅ Google OAuth Setup
 google_bp = make_google_blueprint(
-    client_id=os.getenv("GOOGLE_CLIENT_ID"),
-    client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
     scope=["openid", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"],
-    redirect_to="google_login",  # Keep this!
+    redirect_to="google_login",
 )
 app.register_blueprint(google_bp, url_prefix="/login")
 
@@ -86,9 +76,7 @@ def google_login():
 
     # ✅ Check if user exists in Supabase
     existing_user = supabase.table("users").select("*").eq("email", user_email).execute()
-
     if not existing_user.data:
-        # ✅ Insert new user
         supabase.table("users").insert({"email": user_email, "name": user_name}).execute()
 
     # ✅ Store user details in session
@@ -101,9 +89,7 @@ def google_login():
 # ✅ Check Authentication Status
 @app.route("/is_authenticated")
 def is_authenticated():
-    if "user_email" in session:
-        return jsonify({"authenticated": True, "user": session.get("user_name", "Unknown User")})
-    return jsonify({"authenticated": False})
+    return jsonify({"authenticated": "user_email" in session, "user": session.get("user_name", "Unknown User")})
 
 # ✅ Logout
 @app.route("/logout")
@@ -119,100 +105,15 @@ def extract_patient_info(content):
     name_match = re.search(name_pattern, content, re.IGNORECASE)
     date_match = re.search(date_pattern, content, re.IGNORECASE)
 
-    patient_name = name_match.group(1).strip() if name_match else "[Unknown]"
-    test_date = date_match.group(1).strip() if date_match else "[Unknown]"
-
-    return patient_name, test_date
-
-@app.route('/analyze', methods=['POST'])
-def analyze_data():
-    print("📤 Received analyze request")  # Debugging log
-
-    if "user_email" not in session:
-        print("🚫 User not authenticated!")
-        return jsonify({"error": "You must be signed in to analyze files."}), 403
-
-    if 'file' not in request.files:
-        print("🚫 No file received")
-        return jsonify({"error": "No file part"}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        print("🚫 No file selected")
-        return jsonify({"error": "No selected file"}), 400
-
-    try:
-        print("📄 Processing file:", file.filename)
-        file_extension = file.filename.split('.')[-1].lower()
-        content = ""
-
-        if file_extension == 'pdf':
-            print("📑 Extracting text from PDF...")
-            pdf_reader = PyPDF2.PdfReader(file)
-            content = "\n".join([page.extract_text() or '' for page in pdf_reader.pages])
-
-        elif file_extension == 'txt':
-            print("📜 Extracting text from TXT file...")
-            content = file.read().decode('utf-8')
-
-        elif file_extension == 'jpg':
-            print("🖼 Extracting text from Image using OCR...")
-            image = Image.open(file)
-            content = pytesseract.image_to_string(image)
-
-        else:
-            print("🚫 Unsupported file format")
-            return jsonify({"error": "Unsupported file format. Please upload a .txt, .pdf, or .jpg file."}), 400
-
-        if not content.strip():
-            print("🚫 No readable text found in file")
-            return jsonify({"error": "No readable text found in the file"}), 400
-
-        # Debugging OpenAI request
-        print("📝 Sending request to OpenAI...")
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Analyze the following lab test results carefully."},
-                {"role": "user", "content": content}
-            ]
-        )
-
-        full_analysis = response.choices[0].message.content.strip()
-        print("✅ OpenAI response received!")
-
-        return jsonify({"analysis": full_analysis})
-
-    except Exception as e:
-        print("❌ ERROR TRACEBACK:", traceback.format_exc())
-        return jsonify({"error": f"Internal Server Error: {str(e)}"}), 500
+    return name_match.group(1).strip() if name_match else "[Unknown]", date_match.group(1).strip() if date_match else "[Unknown]"
 
 # ✅ Store analysis results
 analysis_results = {}
 
 # ✅ Function to process file & generate report asynchronously
-def process_analysis(task_id, file, file_extension, user_email):
+def process_analysis(task_id, file_content, user_email):
     try:
-        content = ""
-
-        # ✅ Extract text from the uploaded file
-        if file_extension == 'pdf':
-            pdf_reader = PyPDF2.PdfReader(file)
-            content = "\n".join([page.extract_text() or '' for page in pdf_reader.pages])
-        elif file_extension == 'txt':
-            content = file.read().decode('utf-8')
-        elif file_extension == 'jpg':
-            image = Image.open(file)
-            content = pytesseract.image_to_string(image)
-        else:
-            analysis_results[task_id] = {"error": "Unsupported file format."}
-            return
-
-        if not content.strip():
-            analysis_results[task_id] = {"error": "No readable text found in the file."}
-            return
-
-        patient_name, test_date = extract_patient_info(content)
+        patient_name, test_date = extract_patient_info(file_content)
 
         # ✅ OpenAI Analysis
         prompt = f"""
@@ -221,10 +122,10 @@ def process_analysis(task_id, file, file_extension, user_email):
         Test Date: {test_date}
 
         Lab Test Data:
-        {content}
+        {file_content}
         """
 
-        response = openai.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "Analyze the following lab test results carefully."},
@@ -232,7 +133,7 @@ def process_analysis(task_id, file, file_extension, user_email):
             ]
         )
 
-        full_analysis = response.choices[0].message.content.strip()
+        full_analysis = response["choices"][0]["message"]["content"].strip()
 
         # ✅ Save analysis to a PDF
         pdf_filename = f"static/reports/{task_id}.pdf"
@@ -251,8 +152,7 @@ def process_analysis(task_id, file, file_extension, user_email):
         pdf.ln(10)
 
         pdf.set_font("Arial", size=12)
-        utf8_analysis = full_analysis.encode("latin-1", "ignore").decode("latin-1")
-        pdf.multi_cell(0, 8, utf8_analysis)
+        pdf.multi_cell(0, 8, full_analysis)
         pdf.ln(5)
 
         pdf.output(pdf_filename, 'F')
@@ -266,36 +166,25 @@ def process_analysis(task_id, file, file_extension, user_email):
     except Exception as e:
         analysis_results[task_id] = {"error": str(e)}
 
-# ✅ New API: Start Analysis & Return Task ID
+# ✅ Start Analysis & Return Task ID
 @app.route('/analyze', methods=['POST'])
-def analyze_data_v2():
+def analyze_data():
     if "user_email" not in session:
         return jsonify({"error": "You must be signed in to analyze files."}), 403
 
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
+    file = request.files.get('file')
+    if not file or file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
 
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-
-    file_extension = file.filename.split('.')[-1].lower()
+    content = file.read().decode('utf-8')  # Assume text-based input for now
 
     # ✅ Generate a unique task ID
     task_id = str(uuid.uuid4())
 
     # ✅ Start background processing
-    thread = threading.Thread(target=process_analysis, args=(task_id, file, file_extension, session["user_email"]))
-    thread.start()
+    threading.Thread(target=process_analysis, args=(task_id, content, session["user_email"])).start()
 
     return jsonify({"message": "Processing started", "task_id": task_id})
-
-# ✅ New API: Check Analysis Status
-@app.route('/analysis_status/<task_id>', methods=['GET'])
-def get_analysis_status(task_id):
-    if task_id in analysis_results:
-        return jsonify(analysis_results[task_id])
-    return jsonify({"status": "Processing, please wait..."}), 202
 
 # ✅ Run Flask App
 if __name__ == "__main__":
