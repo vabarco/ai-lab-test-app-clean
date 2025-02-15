@@ -1,10 +1,10 @@
 {
   "functions": {
-    "server.py": {
+    "api/server.py": {
       "maxDuration": 10
     }
   },
   "routes": [
-    { "src": "/(.*)", "dest": "server.py" }
+    { "src": "/(.*)", "dest": "/api/server.py" }
   ]
 }
