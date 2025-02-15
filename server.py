@@ -266,7 +266,7 @@ def process_analysis(task_id, file, file_extension, user_email):
 
 # ✅ New API: Start Analysis & Return Task ID
 @app.route('/analyze', methods=['POST'])
-def analyze_data():
+def analyze_data_v2():
     if "user_email" not in session:
         return jsonify({"error": "You must be signed in to analyze files."}), 403
 
