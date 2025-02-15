@@ -14,6 +14,8 @@ import traceback
 import re
 from fpdf import FPDF
 from flask_cors import CORS
+import threading
+import uuid
 
 # Load environment variables from .env file
 load_dotenv()
@@ -120,24 +122,78 @@ def extract_patient_info(content):
 
     return patient_name, test_date
 
-# ✅ File Upload & AI Analysis
 @app.route('/analyze', methods=['POST'])
 def analyze_data():
+    print("📤 Received analyze request")  # Debugging log
+
     if "user_email" not in session:
+        print("🚫 User not authenticated!")
         return jsonify({"error": "You must be signed in to analyze files."}), 403
 
     if 'file' not in request.files:
+        print("🚫 No file received")
         return jsonify({"error": "No file part"}), 400
 
     file = request.files['file']
     if file.filename == '':
+        print("🚫 No file selected")
         return jsonify({"error": "No selected file"}), 400
 
     try:
+        print("📄 Processing file:", file.filename)
         file_extension = file.filename.split('.')[-1].lower()
         content = ""
 
-        # ✅ Process File
+        if file_extension == 'pdf':
+            print("📑 Extracting text from PDF...")
+            pdf_reader = PyPDF2.PdfReader(file)
+            content = "\n".join([page.extract_text() or '' for page in pdf_reader.pages])
+
+        elif file_extension == 'txt':
+            print("📜 Extracting text from TXT file...")
+            content = file.read().decode('utf-8')
+
+        elif file_extension == 'jpg':
+            print("🖼 Extracting text from Image using OCR...")
+            image = Image.open(file)
+            content = pytesseract.image_to_string(image)
+
+        else:
+            print("🚫 Unsupported file format")
+            return jsonify({"error": "Unsupported file format. Please upload a .txt, .pdf, or .jpg file."}), 400
+
+        if not content.strip():
+            print("🚫 No readable text found in file")
+            return jsonify({"error": "No readable text found in the file"}), 400
+
+        # Debugging OpenAI request
+        print("📝 Sending request to OpenAI...")
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Analyze the following lab test results carefully."},
+                {"role": "user", "content": content}
+            ]
+        )
+
+        full_analysis = response.choices[0].message.content.strip()
+        print("✅ OpenAI response received!")
+
+        return jsonify({"analysis": full_analysis})
+
+    except Exception as e:
+        print("❌ ERROR TRACEBACK:", traceback.format_exc())
+        return jsonify({"error": f"Internal Server Error: {str(e)}"}), 500
+
+# ✅ Store analysis results
+analysis_results = {}
+
+# ✅ Function to process file & generate report asynchronously
+def process_analysis(task_id, file, file_extension, user_email):
+    try:
+        content = ""
+
+        # ✅ Extract text from the uploaded file
         if file_extension == 'pdf':
             pdf_reader = PyPDF2.PdfReader(file)
             content = "\n".join([page.extract_text() or '' for page in pdf_reader.pages])
@@ -147,10 +203,12 @@ def analyze_data():
             image = Image.open(file)
             content = pytesseract.image_to_string(image)
         else:
-            return jsonify({"error": "Unsupported file format. Please upload a .txt, .pdf, or .jpg file."}), 400
+            analysis_results[task_id] = {"error": "Unsupported file format."}
+            return
 
         if not content.strip():
-            return jsonify({"error": "No readable text found in the file"}), 400
+            analysis_results[task_id] = {"error": "No readable text found in the file."}
+            return
 
         patient_name, test_date = extract_patient_info(content)
 
@@ -164,7 +222,7 @@ def analyze_data():
         {content}
         """
 
-        response = openai.chat.completions.create(  # <- Correct function
+        response = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "Analyze the following lab test results carefully."},
@@ -174,8 +232,10 @@ def analyze_data():
 
         full_analysis = response.choices[0].message.content.strip()
 
-        # ✅ Save Analysis to PDF
-        pdf_path = "public/report.pdf"
+        # ✅ Save analysis to a PDF
+        pdf_filename = f"static/reports/{task_id}.pdf"
+        os.makedirs("static/reports", exist_ok=True)
+
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", style='B', size=16)
@@ -189,20 +249,51 @@ def analyze_data():
         pdf.ln(10)
 
         pdf.set_font("Arial", size=12)
-        pdf.multi_cell(0, 8, full_analysis)
+        utf8_analysis = full_analysis.encode("latin-1", "ignore").decode("latin-1")
+        pdf.multi_cell(0, 8, utf8_analysis)
         pdf.ln(5)
 
-        pdf.output(pdf_path, 'F')
+        pdf.output(pdf_filename, 'F')
 
-        return jsonify({
+        # ✅ Store result
+        analysis_results[task_id] = {
             "analysis": full_analysis,
-            "download_link": "/report.pdf"
-        })
+            "download_link": f"/{pdf_filename}"
+        }
 
     except Exception as e:
-        error_details = traceback.format_exc()
-        print("ERROR TRACEBACK:", error_details)
-        return jsonify({"error": f"Internal Server Error: {str(e)}", "details": error_details}), 500
+        analysis_results[task_id] = {"error": str(e)}
+
+# ✅ New API: Start Analysis & Return Task ID
+@app.route('/analyze', methods=['POST'])
+def analyze_data():
+    if "user_email" not in session:
+        return jsonify({"error": "You must be signed in to analyze files."}), 403
+
+    if 'file' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    file_extension = file.filename.split('.')[-1].lower()
+
+    # ✅ Generate a unique task ID
+    task_id = str(uuid.uuid4())
+
+    # ✅ Start background processing
+    thread = threading.Thread(target=process_analysis, args=(task_id, file, file_extension, session["user_email"]))
+    thread.start()
+
+    return jsonify({"message": "Processing started", "task_id": task_id})
+
+# ✅ New API: Check Analysis Status
+@app.route('/analysis_status/<task_id>', methods=['GET'])
+def get_analysis_status(task_id):
+    if task_id in analysis_results:
+        return jsonify(analysis_results[task_id])
+    return jsonify({"status": "Processing, please wait..."}), 202
 
 # ✅ Run Flask App
 if __name__ == "__main__":
