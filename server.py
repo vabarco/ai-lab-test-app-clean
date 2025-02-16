@@ -54,12 +54,13 @@ app.register_blueprint(google_bp, url_prefix="/login")
 def serve_index():
     return send_from_directory('public', 'index.html')
 
-# ✅ Serve only files with proper extensions (.js, .css)
 @app.route('/<path:filename>')
 def serve_static(filename):
-    if filename.endswith(('.js', '.css', '.png', '.jpg')):
-        return send_from_directory('public', filename, mimetype='text/javascript' if filename.endswith('.js') else 'text/css')
-    return serve_index()
+    if filename.endswith('.js'):
+        return send_from_directory('public', filename, mimetype='application/javascript')
+    elif filename.endswith('.css'):
+        return send_from_directory('public', filename, mimetype='text/css')
+    return send_from_directory('public', filename)
 
 # ✅ Google Login
 @app.route("/google-login")
