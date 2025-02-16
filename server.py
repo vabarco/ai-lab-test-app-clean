@@ -13,7 +13,7 @@ from flask_dance.contrib.google import make_google_blueprint, google
 from flask_cors import CORS
 from fpdf import FPDF
 from supabase import create_client, Client
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, render_template
 
 # ✅ Load environment variables from .env
 load_dotenv()
@@ -54,9 +54,13 @@ app.register_blueprint(google_bp, url_prefix="/login")
 def serve_index():
     return send_from_directory('public', 'index.html')
 
+# ✅ Serve only .css, .js from public/
 @app.route('/<path:filename>')
 def serve_static(filename):
-    return send_from_directory('public', filename)
+    if filename.endswith(('.js', '.css', '.png', '.jpg', '.ico')):
+        return send_from_directory('public', filename)
+    else:
+        return serve_index()
 
 # ✅ Google Login
 @app.route("/google-login")
