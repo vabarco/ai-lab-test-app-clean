@@ -13,7 +13,7 @@ from flask_dance.contrib.google import make_google_blueprint, google
 from flask_cors import CORS
 from fpdf import FPDF
 from supabase import create_client, Client
-from flask import send_from_directory
+from flask import Flask, send_from_directory
 
 # ✅ Load environment variables from .env
 load_dotenv()
@@ -30,7 +30,7 @@ if not all([SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY, GOOGLE_CLIENT_ID, GOOGLE
     raise ValueError("Missing required environment variables. Check .env file.")
 
 # ✅ Initialize Flask App
-app = Flask(__name__, static_folder="public", static_url_path="/")
+app = Flask(__name__, static_folder='public')
 app.secret_key = SECRET_KEY
 app.config["SESSION_TYPE"] = "filesystem"
 
@@ -54,9 +54,9 @@ app.register_blueprint(google_bp, url_prefix="/login")
 def serve_index():
     return send_from_directory('public', 'index.html')
 
-@app.route('/<path:path>')
-def serve_static(path):
-    return send_from_directory('public', path)
+@app.route('/<path:filename>')
+def serve_static(filename):
+    return send_from_directory('public', filename)
 
 # ✅ Google Login
 @app.route("/google-login")
