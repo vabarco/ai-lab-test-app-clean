@@ -49,18 +49,21 @@ google_bp = make_google_blueprint(
 )
 app.register_blueprint(google_bp, url_prefix="/login")
 
-# ✅ Serve Frontend Files
 @app.route('/')
 def serve_index():
     return send_from_directory('public', 'index.html')
 
+# ✅ Serve JS and CSS only if they exist
 @app.route('/<path:filename>')
-def serve_static(filename):
+def serve_static_files(filename):
     if filename.endswith('.js'):
         return send_from_directory('public', filename, mimetype='application/javascript')
     elif filename.endswith('.css'):
         return send_from_directory('public', filename, mimetype='text/css')
-    return send_from_directory('public', filename)
+    elif filename.endswith(('.png', '.jpg', '.ico')):
+        return send_from_directory('public', filename)
+    else:
+        return "404 Not Found", 404
 
 # ✅ Google Login
 @app.route("/google-login")
