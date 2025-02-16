@@ -13,6 +13,7 @@ from flask_dance.contrib.google import make_google_blueprint, google
 from flask_cors import CORS
 from fpdf import FPDF
 from supabase import create_client, Client
+from flask import send_from_directory
 
 # ✅ Load environment variables from .env
 load_dotenv()
@@ -49,9 +50,9 @@ google_bp = make_google_blueprint(
 app.register_blueprint(google_bp, url_prefix="/login")
 
 # ✅ Serve Frontend Files
-@app.route("/")
+@app.route('/')
 def serve_index():
-    return send_from_directory("public", "index.html")
+    return send_from_directory('public', 'index.html')
 
 @app.route('/<path:path>')
 def serve_static(path):
